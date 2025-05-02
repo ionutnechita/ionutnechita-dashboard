@@ -21,6 +21,26 @@ export default defineNuxtConfig({
   vite: {
     plugins: [
       tailwindcss(),
+      {
+        name: 'vite-plugin-ignore-tailwind-sourcemap-warnings',
+        apply: 'build',
+        configResolved(config) {
+          const originalOnWarn = config.build.rollupOptions.onwarn;
+          config.build.rollupOptions.onwarn = (warning, warn) => {
+            if (
+              warning.code === 'SOURCEMAP_BROKEN' &&
+              warning.plugin === '@tailwindcss/vite:generate:build'
+            ) {
+              return;
+            }
+            if (originalOnWarn) {
+              originalOnWarn(warning, warn);
+            } else {
+              warn(warning);
+            }
+          };
+        }
+      }
     ],
   },
   shadcn: {
@@ -43,8 +63,7 @@ export default defineNuxtConfig({
         footerActionLink: 'text-primary hover:text-primary/90 font-semibold',
         card: 'bg-card shadow-md',
       }
-    },
-    afterSignInUrl: '/dashboard'
+    }
   },
 
   // Runtime config for environment variables
@@ -56,5 +75,11 @@ export default defineNuxtConfig({
     public: {
       clerkPublishableKey: process.env.NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY,
     }
+  },
+  routeRules: {
+    '/login': { ssr: false },
+    '/sign-up': { ssr: false },
+    '/account': { ssr: false },
+    '/dashboard': { ssr: false },
   }
 })

@@ -1,47 +1,8 @@
-<!-- pages/index.vue -->
-<template>
-  <div class="hello-world-container">
-    <!-- Main content of the Hello World page -->
-    <div class="hello-content">
-      <h1 :class="['title', { 'title-dark': isDark }]">Welcome!</h1>
-
-      <!-- Countdown to June 1st -->
-      <div class="countdown-container">
-        <div class="countdown-content">
-          <h2 class="countdown-title">Until June 1st:</h2>
-          <div class="countdown-grid">
-            <div class="countdown-item">
-              <span class="countdown-number">{{ days }}</span>
-              <span class="countdown-label">Days</span>
-            </div>
-            <div class="countdown-item">
-              <span class="countdown-number">{{ hours }}</span>
-              <span class="countdown-label">Hours</span>
-            </div>
-            <div class="countdown-item">
-              <span class="countdown-number">{{ minutes }}</span>
-              <span class="countdown-label">Minutes</span>
-            </div>
-            <div class="countdown-item">
-              <span class="countdown-number">{{ seconds }}</span>
-              <span class="countdown-label">Seconds</span>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
-</template>
-
-<script setup>
-import { ref, inject, computed, watch } from 'vue'
+<script setup lang="ts">
+import { ref, inject, onMounted, onBeforeUnmount } from 'vue'
 
 // Sync with global theme using inject
 const isDark = inject('isDarkMode')
-const toggleTheme = inject('toggleDarkMode')
-
-// Computed property to display current theme (for debugging)
-const currentTheme = computed(() => isDark.value ? 'dark' : 'light')
 
 // Countdown target date (June 1st)
 const targetDate = new Date('2025-06-01T00:00:00+03:00')
@@ -52,16 +13,25 @@ const hours = ref(0)
 const minutes = ref(0)
 const seconds = ref(0)
 
+// Reference to interval for cleanup
+let countdownInterval: string | number | NodeJS.Timeout | null | undefined = null
+
 // Function to update countdown
 const updateCountdown = () => {
   const now = new Date()
-  const diff = targetDate - now
+  const diff = targetDate.getTime() - now.getTime()
 
   if (diff <= 0) {
     days.value = 0
     hours.value = 0
     minutes.value = 0
     seconds.value = 0
+
+    // Clear interval if countdown is finished
+    if (countdownInterval) {
+      clearInterval(countdownInterval)
+      countdownInterval = null
+    }
     return
   }
 
@@ -76,15 +46,21 @@ const updateCountdown = () => {
   seconds.value = s
 }
 
-// Update countdown immediately
-updateCountdown()
+// Set up interval only on client-side
+onMounted(() => {
+  // Update countdown immediately
+  updateCountdown()
 
-// Update countdown every second
-setInterval(updateCountdown, 1000)
+  // Update countdown every second
+  countdownInterval = setInterval(updateCountdown, 1000)
+})
 
-// Optional: monitor theme changes for debugging
-watch(isDark, (newValue) => {
-  console.log(`Theme changed to: ${newValue ? 'dark' : 'light'}`)
+// Clean up interval when component is unmounted
+onBeforeUnmount(() => {
+  if (countdownInterval) {
+    clearInterval(countdownInterval)
+    countdownInterval = null
+  }
 })
 </script>
 
@@ -388,3 +364,37 @@ watch(isDark, (newValue) => {
   }
 }
 </style>
+
+<template>
+  <div class="hello-world-container">
+    <!-- Main content of the Hello World page -->
+    <div class="hello-content">
+      <h1 :class="['title', { 'title-dark': isDark }]">Welcome!</h1>
+
+      <!-- Countdown to June 1st -->
+      <div class="countdown-container">
+        <div class="countdown-content">
+          <h2 class="countdown-title">Until June 1st:</h2>
+          <div class="countdown-grid">
+            <div class="countdown-item">
+              <span class="countdown-number">{{ days }}</span>
+              <span class="countdown-label">Days</span>
+            </div>
+            <div class="countdown-item">
+              <span class="countdown-number">{{ hours }}</span>
+              <span class="countdown-label">Hours</span>
+            </div>
+            <div class="countdown-item">
+              <span class="countdown-number">{{ minutes }}</span>
+              <span class="countdown-label">Minutes</span>
+            </div>
+            <div class="countdown-item">
+              <span class="countdown-number">{{ seconds }}</span>
+              <span class="countdown-label">Seconds</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
