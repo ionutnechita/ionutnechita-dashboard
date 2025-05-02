@@ -2,7 +2,9 @@
 <template>
   <ThemeProvider>
     <div class="min-h-screen bg-background text-foreground transition-colors duration-300">
-      <NuxtPage />
+      <NuxtLayout>
+        <NuxtPage />
+      </NuxtLayout>
     </div>
   </ThemeProvider>
 </template>
