@@ -1,5 +1,12 @@
 <script setup lang="ts">
-import Header from '~/components/Header.vue'
+import Header from "~/components/Header.vue";
+import Footer from "~/components/Footer.vue";
+import { useRoute } from "vue-router";
+import { computed } from "vue";
+const route = useRoute();
+const isFooterVisible = computed(
+  () => !["/dashboard", "/account", "/login", "/sign-up"].includes(route.path)
+);
 </script>
 
 <style scoped>
@@ -11,8 +18,7 @@ import Header from '~/components/Header.vue'
 
 .main-content {
   flex: 1;
-  padding-top: 64px;
-  /* Same as header height */
+  padding-top: 64px; /* Same as header height */
 }
 </style>
 
@@ -22,5 +28,6 @@ import Header from '~/components/Header.vue'
     <main class="main-content">
       <slot />
     </main>
+    <Footer v-if="isFooterVisible" />
   </div>
 </template>

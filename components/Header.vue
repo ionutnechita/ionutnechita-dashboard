@@ -1,68 +1,449 @@
 <script setup lang="ts">
-import { inject, ref, onMounted, onBeforeUnmount } from 'vue'
-import { useRouter } from 'vue-router'
-import { SignedIn, useClerk, useAuth } from '@clerk/vue'
-import Logo from './Logo.vue'
+import {
+  inject,
+  ref,
+  onMounted,
+  onBeforeUnmount,
+  computed,
+  shallowRef,
+  markRaw,
+} from "vue";
+import { useRouter, useRoute } from "vue-router";
+import Logo from "./Logo.vue";
+
+// Try importing Clerk components, but don't fail if they don't exist
+let SignedIn, useClerk, useAuth, isSignedIn;
+
+try {
+  const clerk = await import("@clerk/vue");
+  SignedIn = markRaw(clerk.SignedIn);
+  useClerk = clerk.useClerk;
+  useAuth = clerk.useAuth;
+  const auth = useAuth();
+  isSignedIn = auth.isSignedIn || ref(false);
+} catch (e) {
+  // Clerk is not installed, use placeholder components
+  SignedIn = null;
+  useClerk = () => ({});
+  useAuth = () => ({ isSignedIn: ref(false) });
+  isSignedIn = ref(false);
+}
 
 // Define types for injected values
-type ToggleDarkModeFn = () => void
+type ToggleDarkModeFn = () => void;
 
-// Get theme context from ThemeProvider
-const isDark = inject<boolean>('isDarkMode', false)
-const toggleDarkMode = inject<ToggleDarkModeFn>('toggleDarkMode', () => { })
+// Get theme context from ThemeProvider or use local implementation
+const isDark = inject<boolean | { value: boolean }>("isDarkMode", ref(false));
+const toggleDarkMode = inject<ToggleDarkModeFn>("toggleDarkMode", () => {
+  if (typeof isDark === "object" && "value" in isDark) {
+    isDark.value = !isDark.value;
+    if (isDark.value) {
+      document.documentElement.classList.add("dark");
+      localStorage.setItem("theme", "dark");
+    } else {
+      document.documentElement.classList.remove("dark");
+      localStorage.setItem("theme", "light");
+    }
+  }
+});
 
 // Router for navigation
-const router = useRouter()
+const router = useRouter();
+const route = useRoute();
+const isHomePage = computed(() => route.path === "/");
 
-// Get Clerk instance and auth status for signOut functionality
-const clerk = useClerk()
-const { isSignedIn } = useAuth()
+// Get Clerk instance for signOut functionality if available
+const clerk = useClerk();
 
-// Navigation handlers
-const handleMyAccount = () => {
-  // Navigate to account page
-  router.push('/account')
-}
+// Navigation handlers - optimized with single functions
+const navigateTo = (path) => {
+  router.push(path);
+  isMobileMenuOpen.value = false;
+};
 
-const handleDashboard = () => {
-  // Navigate to dashboard page
-  router.push('/dashboard')
-}
+// ADĂUGAT: Funcție pentru a naviga la începutul paginii
+const navigateToTop = () => {
+  if (isHomePage.value) {
+    // Dacă suntem deja pe pagina principală, doar facem scroll la început
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  } else {
+    // Dacă suntem pe o altă pagină, navigăm la pagina principală și apoi facem scroll la început
+    router.push("/").then(() => {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    });
+  }
 
-// Improved logout handling
+  // Închidem meniul mobil dacă este deschis
+  isMobileMenuOpen.value = false;
+};
+
+// Keep original logout handling
 const handleLogout = async () => {
   try {
     // Check if user is signed in before attempting to sign out
-    if (isSignedIn.value) {
+    if (isSignedIn && isSignedIn.value) {
+      if (clerk && typeof clerk.signOut === "function") {
+        await clerk.signOut();
+      } else if (
+        clerk &&
+        clerk.value &&
+        typeof clerk.value.signOut === "function"
+      ) {
+        await clerk.value.signOut();
+      } else {
+        console.error("Clerk signOut is not available!");
+      }
       // Small delay before redirect to ensure clerk completes the signout
       setTimeout(() => {
-        router.push('/')
-      }, 100)
+        router.push("/");
+      }, 100);
     } else {
-      console.warn('Cannot log out - no active session')
+      console.warn("Cannot log out - no active session");
     }
   } catch (error) {
-    console.error('Logout error:', error)
+    console.error("Logout error:", error);
   }
-}
+};
 
-// Scroll effect
-const scrollY = ref<number>(0)
-const isScrolled = ref<boolean>(false)
+// Mobile menu state
+const isMobileMenuOpen = ref(false);
+const toggleMobileMenu = () => {
+  isMobileMenuOpen.value = !isMobileMenuOpen.value;
+};
+
+// Scroll effect with debounce
+const isScrolled = ref(false);
+let scrollTimeout = null;
 
 const handleScroll = () => {
-  scrollY.value = window.scrollY
-  isScrolled.value = scrollY.value > 50
-}
+  if (scrollTimeout) return;
 
+  scrollTimeout = setTimeout(() => {
+    isScrolled.value = window.scrollY > 50;
+    scrollTimeout = null;
+  }, 10);
+};
+
+// Section navigation - optimized
+const scrollToSection = (sectionId) => {
+  const el = document.getElementById(sectionId);
+  if (el) {
+    el.scrollIntoView({ behavior: "smooth" });
+  }
+};
+
+const handleSectionLink = (sectionId) => {
+  if (isHomePage.value) {
+    scrollToSection(sectionId);
+  } else {
+    router.push("/").then(() => {
+      // Scroll după ce pagina s-a încărcat
+      setTimeout(() => scrollToSection(sectionId), 200);
+    });
+  }
+
+  // Close mobile menu if open
+  isMobileMenuOpen.value = false;
+};
+
+// Lifecycle hooks
 onMounted(() => {
-  window.addEventListener('scroll', handleScroll)
-})
+  window.addEventListener("scroll", handleScroll);
+
+  // Initialize theme from localStorage or system preference
+  if (typeof window !== "undefined") {
+    const savedTheme = localStorage.getItem("theme");
+    const prefersDark = window.matchMedia(
+      "(prefers-color-scheme: dark)"
+    ).matches;
+
+    if (typeof isDark === "object" && "value" in isDark) {
+      if (savedTheme === "dark" || (!savedTheme && prefersDark)) {
+        isDark.value = true;
+        document.documentElement.classList.add("dark");
+      } else {
+        isDark.value = false;
+        document.documentElement.classList.remove("dark");
+      }
+    }
+  }
+});
 
 onBeforeUnmount(() => {
-  window.removeEventListener('scroll', handleScroll)
-})
+  window.removeEventListener("scroll", handleScroll);
+  if (scrollTimeout) clearTimeout(scrollTimeout);
+});
+
+// Computed for isDarkValue to simplify template conditions - optimized
+const isDarkValue = computed(() => {
+  return typeof isDark === "object" && "value" in isDark
+    ? isDark.value
+    : isDark;
+});
 </script>
+
+<template>
+  <header
+    :class="[
+      'header-container',
+      { scrolled: isScrolled, 'light-theme': !isDarkValue },
+    ]"
+  >
+    <div class="header-content">
+      <!-- Logo/Brand - MODIFICAT: Adăugat click handler pentru navigare la începutul paginii -->
+      <div class="brand">
+        <a @click.prevent="navigateToTop" class="brand-link">
+          <Logo />
+        </a>
+      </div>
+
+      <!-- Desktop Navigation for Landing Page Links (hidden on mobile) -->
+      <nav class="hidden md:flex items-center space-x-6 ml-auto mr-6">
+        <!-- ADĂUGAT: Buton Home pentru a merge la începutul paginii -->
+        <a @click.prevent="navigateToTop" class="nav-link">Acasă</a>
+
+        <template
+          v-for="(item, index) in [
+            { id: 'about', label: 'Despre' },
+            { id: 'experience', label: 'Experiență' },
+            { id: 'skills', label: 'Competențe' },
+            { id: 'projects', label: 'Proiecte' },
+            { id: 'contact', label: 'Contact', isContact: true },
+          ]"
+          :key="index"
+        >
+          <a
+            @click.prevent="handleSectionLink(item.id)"
+            :class="['nav-link', { 'contact-button': item.isContact }]"
+            :href="`#${item.id}`"
+            >{{ item.label }}</a
+          >
+        </template>
+        <div class="header-separator" aria-hidden="true"></div>
+      </nav>
+
+      <!-- Navigation buttons -->
+      <div class="nav-buttons">
+        <!-- Only show dashboard/logout buttons when signed in -->
+        <component :is="SignedIn" v-if="SignedIn">
+          <!-- Dashboard button with dashboard icon -->
+          <button
+            @click="navigateTo('/dashboard')"
+            class="dashboard-button tooltip dashboard-tooltip"
+            aria-label="Dashboard"
+          >
+            <!-- Dashboard icon (grid/layout icon) -->
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="icon"
+            >
+              <rect x="3" y="3" width="7" height="7" />
+              <rect x="14" y="3" width="7" height="7" />
+              <rect x="14" y="14" width="7" height="7" />
+              <rect x="3" y="14" width="7" height="7" />
+            </svg>
+          </button>
+        </component>
+
+        <!-- Account button with user icon -->
+        <button
+          @click="navigateTo('/account')"
+          class="account-button tooltip account-tooltip"
+          aria-label="Account settings"
+        >
+          <!-- User icon -->
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            class="icon"
+          >
+            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
+            <circle cx="12" cy="7" r="4"></circle>
+          </svg>
+        </button>
+
+        <component :is="SignedIn" v-if="SignedIn">
+          <button
+            @click="handleLogout"
+            class="logout-button tooltip logout-tooltip"
+            aria-label="Logout"
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="20"
+              height="20"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="icon"
+            >
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+              <polyline points="16 17 21 12 16 7"></polyline>
+              <line x1="21" y1="12" x2="9" y2="12"></line>
+            </svg>
+          </button>
+        </component>
+
+        <!-- Theme toggle button (always visible) -->
+        <button
+          @click="toggleDarkMode"
+          class="theme-toggle-btn tooltip theme-tooltip"
+          aria-label="Toggle theme"
+        >
+          <!-- Icon for dark mode (visible in light mode) -->
+          <svg
+            v-if="!isDarkValue"
+            xmlns="http://www.w3.org/2000/svg"
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            class="icon"
+          >
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+          </svg>
+
+          <!-- Icon for light mode (visible in dark mode) -->
+          <svg
+            v-else
+            xmlns="http://www.w3.org/2000/svg"
+            width="20"
+            height="20"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            class="icon"
+          >
+            <circle cx="12" cy="12" r="5"></circle>
+            <line x1="12" y1="1" x2="12" y2="3"></line>
+            <line x1="12" y1="21" x2="12" y2="23"></line>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+            <line x1="1" y1="12" x2="3" y2="12"></line>
+            <line x1="21" y1="12" x2="23" y2="12"></line>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+          </svg>
+        </button>
+
+        <!-- Mobile menu button (visible only on mobile) -->
+        <button
+          @click="toggleMobileMenu"
+          class="md:hidden ml-2 mobile-menu-button"
+          aria-label="Toggle menu"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            class="h-6 w-6"
+            fill="none"
+            viewBox="0 0 24 24"
+            stroke="currentColor"
+          >
+            <path
+              v-if="isMobileMenuOpen"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M6 18L18 6M6 6l12 12"
+            />
+            <path
+              v-else
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="2"
+              d="M4 6h16M4 12h16M4 18h16"
+            />
+          </svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Mobile Menu with transition -->
+    <Transition name="menu-fade">
+      <div v-if="isMobileMenuOpen" class="mobile-menu">
+        <div class="container mx-auto px-4 py-4">
+          <nav class="flex flex-col space-y-4">
+            <!-- ADĂUGAT: Link Acasă pentru mobil -->
+            <a href="#" class="mobile-nav-link" @click.prevent="navigateToTop">
+              Acasă
+            </a>
+
+            <!-- Landing page links using v-for -->
+            <template
+              v-for="(item, index) in [
+                { id: 'about', label: 'Despre', class: 'mobile-nav-link' },
+                {
+                  id: 'experience',
+                  label: 'Experiență',
+                  class: 'mobile-nav-link',
+                },
+                { id: 'skills', label: 'Competențe', class: 'mobile-nav-link' },
+                { id: 'projects', label: 'Proiecte', class: 'mobile-nav-link' },
+                {
+                  id: 'contact',
+                  label: 'Contact',
+                  class: 'mobile-contact-link',
+                },
+              ]"
+              :key="index"
+            >
+              <a
+                :href="`#${item.id}`"
+                :class="item.class"
+                @click.prevent="handleSectionLink(item.id)"
+              >
+                {{ item.label }}
+              </a>
+            </template>
+
+            <!-- Dashboard link (when signed in) -->
+            <template v-if="SignedIn && isSignedIn && isSignedIn.value">
+              <a
+                href="/dashboard"
+                class="mobile-dashboard-link"
+                @click.prevent="navigateTo('/dashboard')"
+              >
+                Dashboard
+              </a>
+              <a
+                href="#"
+                class="mobile-logout-link"
+                @click.prevent="handleLogout"
+              >
+                Logout
+              </a>
+            </template>
+          </nav>
+        </div>
+      </div>
+    </Transition>
+  </header>
+</template>
 
 <style scoped>
 .header-container {
@@ -70,89 +451,42 @@ onBeforeUnmount(() => {
   top: 0;
   left: 0;
   right: 0;
-  height: 60px;
-  background: hsla(var(--background), 0.05);
-  backdrop-filter: blur(10px);
-  color: hsl(var(--foreground));
-  border-bottom: 1px solid hsla(var(--border), 0.1);
+  height: 64px;
+  color: #ffffff;
   z-index: 50;
   transition: all 0.3s ease;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 2rem;
+
+  /* Dark theme default */
+  background-color: rgba(12, 12, 29, 0.05);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Light theme styles */
+.header-container.light-theme {
+  background-color: rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+  color: #1a1a2e;
 }
 
 .header-container.scrolled {
-  background: hsla(var(--background), 0.1);
+  background-color: rgba(12, 12, 29, 0.9);
   box-shadow: 0 2px 15px rgba(0, 0, 0, 0.1);
-  border-bottom: 1px solid hsla(var(--border), 0.2);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.2);
 }
 
-/* Dark theme adjustments */
-@media (prefers-color-scheme: dark) {
-  .header-container {
-    background: rgba(0, 0, 0, 0.05);
-    backdrop-filter: blur(15px);
-    -webkit-backdrop-filter: blur(15px);
-    color: hsl(var(--foreground));
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-  }
-
-  .header-container.scrolled {
-    background: rgba(0, 0, 0, 0.1);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.2);
-  }
-
-  .theme-toggle-btn {
-    background: rgba(0, 0, 0, 0.8);
-  }
-
-  .theme-toggle-btn:hover {
-    background: rgba(0, 0, 0, 0.95);
-  }
-
-  .account-button, .dashboard-button, .logout-button {
-    background: rgba(0, 0, 0, 0.1);
-  }
-
-  .account-button:hover, .dashboard-button:hover, .logout-button:hover {
-    background: rgba(0, 0, 0, 0.2);
-  }
-}
-
-/* Light theme adjustments */
-@media (prefers-color-scheme: light) {
-  .header-container {
-    background: hsla(var(--background), 0.05);
-    color: hsl(var(--foreground));
-  }
-
-  .header-container.scrolled {
-    background: hsla(var(--background), 0.1);
-  }
-
-  .theme-toggle-btn {
-    background: hsla(var(--background), 0.8);
-  }
-
-  .theme-toggle-btn:hover {
-    background: hsla(var(--background), 0.95);
-  }
-
-  .account-button, .dashboard-button {
-    background: hsla(var(--secondary), 0.1);
-  }
-
-  .account-button:hover, .dashboard-button:hover {
-    background: hsla(var(--secondary), 0.2);
-  }
+.header-container.light-theme.scrolled {
+  background-color: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 2px 15px rgba(0, 0, 0, 0.05);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
 }
 
 .header-content {
   max-width: 1200px;
   width: 100%;
+  height: 100%;
   margin: 0 auto;
+  padding: 0 1.5rem;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -161,17 +495,58 @@ onBeforeUnmount(() => {
 .brand {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
 }
 
 .brand-link {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  color: var(--header-text);
   text-decoration: none;
-  font-weight: 600;
-  font-size: 1.1rem;
+  transition: color 0.3s ease;
+  cursor: pointer; /* ADĂUGAT: Cursor pointer pentru a indica că este clickabil */
+}
+
+/* Navigation links */
+.nav-link {
+  color: #e5e7eb;
+  transition: color 0.3s ease;
+  cursor: pointer; /* ADĂUGAT: Cursor pointer pentru a indica că este clickabil */
+}
+
+.nav-link:hover {
+  color: #ff5d01;
+}
+
+.header-container.light-theme .nav-link {
+  color: #4b5563;
+}
+
+.header-container.light-theme .nav-link:hover {
+  color: #ff5d01;
+}
+
+.contact-button {
+  background: none;
+  color: #e5e7eb;
+  border: none;
+  padding: 0.5rem 0;
+  border-radius: 0;
+  transition: color 0.3s ease;
+  font: inherit;
+  cursor: pointer;
+}
+
+.header-container.light-theme .contact-button {
+  color: #4b5563;
+}
+
+.header-container.light-theme .contact-button:hover {
+  color: #ff5d01;
+}
+
+.contact-button:hover {
+  background: none;
+  color: #ff5d01;
 }
 
 .nav-buttons {
@@ -180,59 +555,115 @@ onBeforeUnmount(() => {
   gap: 0.75rem;
 }
 
+.header-separator {
+  width: 1px;
+  height: 1.8rem;
+  background: #cbd5e1;
+  margin: 0 1rem;
+  opacity: 0.5;
+  transition: background 0.3s, opacity 0.3s;
+}
+.header-container.light-theme .header-separator {
+  background: #374151;
+  opacity: 0.6;
+}
+
+/* Theme toggle button */
 .theme-toggle-btn {
+  background: none;
+  color: #e5e7eb;
+  border: none;
+  padding: 0.5rem 0;
+  border-radius: 0;
+  font: inherit;
+  cursor: pointer;
+  transition: color 0.3s ease;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  border: none;
-  background: hsla(var(--background), 0.8);
-  cursor: pointer;
-  transition: all 0.2s ease;
-  padding: 0.5rem;
+  width: 2.25rem;
+  height: 2.25rem;
+}
+
+.header-container.light-theme .theme-toggle-btn {
+  color: #4b5563;
+}
+
+.header-container.light-theme .theme-toggle-btn:hover {
+  color: #ff5d01;
 }
 
 .theme-toggle-btn:hover {
-  background: hsla(var(--background), 0.95);
-  transform: scale(1.05);
+  background: none;
+  color: #ff5d01;
 }
 
-.account-button, .dashboard-button, .logout-button {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  background: hsla(var(--secondary), 0.1);
+.header-container.light-theme .theme-toggle-btn:hover {
+  background: none;
+  color: #ff5d01;
+}
+
+/* Account, Dashboard and Logout buttons */
+.account-button,
+.dashboard-button,
+.logout-button {
+  background: none;
+  color: #e5e7eb;
   border: none;
-  border-radius: 0.5rem;
-  padding: 0.5rem 1rem;
+  padding: 0.5rem 0;
+  border-radius: 0;
+  font: inherit;
   cursor: pointer;
-  transition: all 0.2s ease;
-  color: hsl(var(--foreground));
+  transition: color 0.3s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2.25rem;
+  height: 2.25rem;
 }
 
-.account-button:hover, .dashboard-button:hover, .logout-button:hover {
-  background: hsla(var(--secondary), 0.2);
-  transform: translateY(-1px);
+.header-container.light-theme .account-button {
+  color: #4b5563;
+}
+
+.account-button:hover {
+  color: #ff5d01;
 }
 
 .dashboard-button {
-  background: hsla(var(--primary), 0.1);
-  color: hsl(var(--primary));
+  background: none;
+  color: #e5e7eb;
+  border: none;
+}
+
+.header-container.light-theme .dashboard-button {
+  color: #4b5563;
+}
+
+.header-container.light-theme .dashboard-button:hover {
+  color: #ff5d01;
 }
 
 .dashboard-button:hover {
-  background: hsla(var(--primary), 0.2);
+  color: #ff5d01;
 }
 
 .logout-button {
-  background: hsla(var(--destructive), 0.1);
-  color: hsl(var(--destructive));
+  background: none;
+  color: #e5e7eb;
+  border: none;
+}
+
+.header-container.light-theme .logout-button {
+  color: #4b5563;
+}
+
+.header-container.light-theme .logout-button:hover {
+  color: #ff5d01;
 }
 
 .logout-button:hover {
-  background: hsla(var(--destructive), 0.2);
+  color: #ff5d01;
 }
 
 .icon {
@@ -242,121 +673,88 @@ onBeforeUnmount(() => {
   stroke: currentColor;
 }
 
-.header-content {
-  display: flex;
-  align-items: center;
-  max-width: 1200px;
-  height: 100%;
-  margin: 0 auto;
-  padding: 0 1.5rem;
-}
-
-.brand {
-  display: flex;
-  align-items: center;
-}
-
-.brand-link {
-  display: flex;
-  align-items: center;
-  text-decoration: none;
-  color: hsl(var(--foreground));
+/* Mobile menu button */
+.mobile-menu-button {
+  color: #e5e7eb;
   transition: color 0.3s ease;
 }
 
-.brand-text {
-  font-size: 1.25rem;
-  font-weight: 700;
-  background: linear-gradient(to right, hsl(var(--primary)), hsl(var(--accent)));
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+.header-container.light-theme .mobile-menu-button {
+  color: #4b5563;
 }
 
-.flex-grow {
-  flex-grow: 1;
+.mobile-menu-button:hover {
+  color: #ffffff;
 }
 
-.nav-buttons {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
+.header-container.light-theme .mobile-menu-button:hover {
+  color: #1e293b;
 }
 
-/* Theme toggle button */
-.theme-toggle-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 2.25rem;
-  height: 2.25rem;
-  border-radius: 0.375rem;
-  background-color: hsl(var(--secondary));
-  color: hsl(var(--secondary-foreground));
-  transition: all 0.2s ease;
-  border: none;
-  cursor: pointer;
+/* Mobile menu */
+.mobile-menu {
+  background-color: rgba(12, 12, 29, 0.95);
+  backdrop-filter: blur(10px);
+  display: none;
 }
 
-.theme-toggle-btn:hover {
-  background-color: hsl(var(--muted));
+.header-container.light-theme + .mobile-menu {
+  background-color: rgba(255, 255, 255, 0.95);
 }
 
-.theme-toggle-btn:focus-visible {
-  outline: 2px solid hsl(var(--ring));
-  outline-offset: 2px;
+@media (max-width: 767px) {
+  .mobile-menu {
+    display: block;
+  }
 }
 
-/* Account, Dashboard and Logout buttons */
-.account-button, .dashboard-button, .logout-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  height: 2.25rem;
-  padding: 0 1rem;
-  border-radius: 0.375rem;
-  font-size: 0.875rem;
-  font-weight: 500;
-  background-color: hsl(var(--secondary));
-  color: hsl(var(--secondary-foreground));
-  transition: all 0.2s ease;
-  border: none;
-  cursor: pointer;
+/* Mobile navigation links */
+.mobile-nav-link {
+  color: #e5e7eb;
+  transition: color 0.3s ease;
+  padding: 0.5rem 0;
 }
 
-.account-button:hover, .dashboard-button:hover, .logout-button:hover {
-  background-color: hsl(var(--muted));
+.header-container.light-theme + .mobile-menu .mobile-nav-link {
+  color: #4b5563;
 }
 
-.dashboard-button {
-  background-color: hsl(var(--primary)/0.1);
-  color: hsl(var(--primary));
+.mobile-nav-link:hover {
+  color: #ff5d01;
 }
 
-.dashboard-button:hover {
-  background-color: hsl(var(--primary)/0.2);
+.mobile-contact-link {
+  color: #ff5d01;
+  transition: opacity 0.3s ease;
+  padding: 0.5rem 0;
 }
 
-.logout-button {
-  background-color: hsl(var(--destructive)/0.1);
-  color: hsl(var(--destructive));
+.mobile-contact-link:hover {
+  opacity: 0.8;
 }
 
-.logout-button:hover {
-  background-color: hsl(var(--destructive)/0.2);
+.mobile-dashboard-link {
+  color: #e5e7eb;
+  transition: color 0.3s ease;
+  padding: 0.5rem 0;
 }
 
-.account-button:focus-visible, .dashboard-button:focus-visible, .theme-toggle-btn:focus-visible, .logout-button:focus-visible {
-  outline: 2px solid hsl(var(--ring));
-  outline-offset: 2px;
+.header-container.light-theme + .mobile-menu .mobile-dashboard-link {
+  color: #4b5563;
 }
 
-.ml-2 {
-  margin-left: 0.5rem;
+.mobile-dashboard-link:hover {
+  color: #3b82f6;
 }
 
-.icon {
-  flex-shrink: 0;
+.mobile-logout-link {
+  color: #ef4444;
+  transition: color 0.3s ease;
+  padding: 0.5rem 0;
+}
+
+.mobile-logout-link:hover {
+  color: #dc2626;
 }
 
 /* Tooltip styles */
@@ -369,8 +767,8 @@ onBeforeUnmount(() => {
   bottom: -30px;
   left: 50%;
   transform: translateX(-50%);
-  background-color: hsl(var(--popover));
-  color: hsl(var(--popover-foreground));
+  background-color: #1a1a2e;
+  color: #ffffff;
   padding: 4px 8px;
   border-radius: 4px;
   font-size: 12px;
@@ -383,21 +781,27 @@ onBeforeUnmount(() => {
   z-index: 100;
 }
 
+.header-container.light-theme .tooltip::after {
+  background-color: #ffffff;
+  color: #1a1a2e;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+}
+
 /* Define tooltip content for each button */
 .dashboard-tooltip::after {
-  content: 'Dashboard';
+  content: "Dashboard";
 }
 
 .account-tooltip::after {
-  content: 'Account settings';
+  content: "Account settings";
 }
 
 .theme-tooltip::after {
-  content: 'Toggle theme';
+  content: "Toggle theme";
 }
 
 .logout-tooltip::after {
-  content: 'Logout';
+  content: "Logout";
 }
 
 .tooltip:hover::after {
@@ -405,114 +809,25 @@ onBeforeUnmount(() => {
   visibility: visible;
 }
 
-/* Responsive adjustments */
-@media (max-width: 640px) {
-  .account-button, .dashboard-button, .logout-button {
-    padding: 0 0.75rem;
+/* Menu transitions */
+.menu-fade-enter-active,
+.menu-fade-leave-active {
+  transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.menu-fade-enter-from,
+.menu-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-10px);
+}
+
+@media (max-width: 768px) {
+  .nav-buttons {
+    gap: 0.5rem;
   }
 
-  .brand-text {
-    font-size: 1.125rem;
-  }
-
-  .account-button span, .dashboard-button span, .logout-button span {
-    display: none;
-    /* Hide text on small screens, show only icon */
-  }
-
-  .account-button, .dashboard-button, .logout-button {
-    width: 2.25rem;
-    padding: 0;
-    justify-content: center;
-  }
-
-  .ml-2 {
-    margin-left: 0;
-  }
-  
   .tooltip::after {
-    bottom: -25px;
+    display: none;
   }
 }
 </style>
-
-<template>
-  <header :class="['header-container', { 'scrolled': isScrolled }]">
-    <div class="header-content">
-      <!-- Logo/Brand -->
-      <div class="brand">
-        <NuxtLink to="/" class="brand-link">
-          <Logo />
-        </NuxtLink>
-      </div>
-
-      <!-- Spacer -->
-      <div class="flex-grow"></div>
-
-      <!-- Navigation buttons -->
-      <div class="nav-buttons">
-        <!-- Only show buttons when signed in -->
-        <SignedIn>
-          <!-- Dashboard button with dashboard icon -->
-          <button @click="handleDashboard" class="dashboard-button tooltip dashboard-tooltip" aria-label="Dashboard">
-            <!-- Dashboard icon (grid/layout icon) -->
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon">
-              <rect x="3" y="3" width="7" height="7" />
-              <rect x="14" y="3" width="7" height="7" />
-              <rect x="14" y="14" width="7" height="7" />
-              <rect x="3" y="14" width="7" height="7" />
-            </svg>
-          </button>
-        </SignedIn>
-
-        <!-- Account button with user icon -->
-        <button @click="handleMyAccount" class="account-button tooltip account-tooltip" aria-label="Account settings">
-            <!-- User icon -->
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
-              stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon">
-              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path>
-              <circle cx="12" cy="7" r="4"></circle>
-            </svg>
-        </button>
-
-        <SignedIn>
-          <SignOutButton>
-            <button @click="handleLogout" class="logout-button tooltip logout-tooltip" aria-label="Logout">
-              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
-                stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-                class="mr-2">
-                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
-                <polyline points="16 17 21 12 16 7"></polyline>
-                <line x1="21" y1="12" x2="9" y2="12"></line>
-              </svg>
-            </button>
-          </SignOutButton>
-        </SignedIn>
-
-        <!-- Theme toggle button (moved to the end, always visible) -->
-        <button @click="toggleDarkMode" class="theme-toggle-btn tooltip theme-tooltip" aria-label="Toggle theme">
-          <!-- Icon for dark mode (visible in light mode) -->
-          <svg v-if="!isDark" xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon">
-            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
-          </svg>
-
-          <!-- Icon for light mode (visible in dark mode) -->
-          <svg v-else xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none"
-            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="icon">
-            <circle cx="12" cy="12" r="5"></circle>
-            <line x1="12" y1="1" x2="12" y2="3"></line>
-            <line x1="12" y1="21" x2="12" y2="23"></line>
-            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
-            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
-            <line x1="1" y1="12" x2="3" y2="12"></line>
-            <line x1="21" y1="12" x2="23" y2="12"></line>
-            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
-            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
-          </svg>
-        </button>
-      </div>
-    </div>
-  </header>
-</template>

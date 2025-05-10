@@ -3,12 +3,12 @@
 const props = defineProps({
   showBrandText: {
     type: Boolean,
-    default: true
+    default: true,
   },
   brandText: {
     type: String,
-    default: 'Ionut Nechita'
-  }
+    default: "Ionut Nechita",
+  },
 });
 </script>
 
